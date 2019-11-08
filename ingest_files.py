@@ -112,7 +112,7 @@ for tile in tiles:
             n = 0
             for f in hdr_files:
                 n += 1
-                print('Processing {} (file {} of {})...'.format(f, n, length(hdr_files)))
+                print('Processing {} (file {} of {})...'.format(f, n, len(hdr_files)))
                 sds = [sd[0] for sd in gdal.Open(f).GetSubDatasets()]
                 band_names = [item.split(':')[-1] for item in sds]
 
