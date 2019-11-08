@@ -109,21 +109,24 @@ for tile in tiles:
             files = download_from_s3('hlsanc', objects, '.')
             #files = [os.path.abspath(os.path.join('.', ntpath.basename(obj['Key']))) for obj in objects]
             hdr_files = [f for f in files if re.search('hdf$', f)]
+            n = 0
             for f in hdr_files:
+                n += 1
+                print('Processing {} (file {} of {})...'.format(f, n, length(hdr_files)))
                 sds = [sd[0] for sd in gdal.Open(f).GetSubDatasets()]
                 band_names = [item.split(':')[-1] for item in sds]
 
                 band_vrts = []
                 for sd in sds:
                     out = tempfile.NamedTemporaryFile(suffix='.vrt').name
-                    subprocess.check_call(['gdal_translate', '-a_scale', '1', '-ot', 'Int16', sd, out])
+                    subprocess.check_call(['gdal_translate', '-a_scale', '1', '-ot', 'Int16', '-q', sd, out])
                     band_vrts.append(out)
 
                 out_base = os.path.splitext(f)[0].replace('.', '_')
                 vrt = tempfile.NamedTemporaryFile(suffix='.vrt').name
                 gdal.BuildVRT(vrt, band_vrts, separate=True)
                 tif = out_base + '.tif'
-                subprocess.check_call(['gdal_translate', '-co', 'COMPRESS=LZW', vrt, tif])
+                subprocess.check_call(['gdal_translate', '-co', 'COMPRESS=LZW', '-q', vrt, tif])
 
             m = get_metadata(hdr_files)
             with open('metadata.csv', 'w', newline='') as csvfile:
