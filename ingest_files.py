@@ -18,6 +18,8 @@ import ntpath
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'gef-ld-toolbox-858b8c8b0b84.json'
 ASSET = 'projects/trends_earth/hls'
 
+SLEEP_SECONDS = 3600 * 2
+
 # Read in the list of tiles
 with open('tiles.txt') as f:
     tiles = f.readlines()
@@ -37,7 +39,7 @@ except IOError:
     s3_client = boto3.client('s3')
 
 
-epoch = datetime.datetime.utcfromtimestamp(0)
+epoch = datetime.datetime.fromtimestamp(0, datetime.timezone.utc)
 def unix_time_millis(dt):
     return (dt - epoch).total_seconds() * 1000.0
 
@@ -69,8 +71,8 @@ def get_metadata(files):
     for f in files:
         this_m = gdal.Open(f).GetMetadata()
         # sensor
-        times = this_m['SENSING_TIME'].split(';')
-        t0 = dateutil.parser(times[0].strip(' '))
+        times = re.findall(r'[\w.\-: ]+', this_m['SENSING_TIME'])
+        t0 = dateutil.parser.parse(times[0].strip(' '))
 
         # # Mask layers don't have a long_name field, so assign one if this is a 
         # # mask layer
@@ -105,8 +107,8 @@ for tile in tiles:
             # Function to download files from S3
             objects = list_s3_objects('hlsanc', l_tiles)
             files = download_from_s3('hlsanc', objects, '.')
+            #files = [os.path.abspath(os.path.join('.', ntpath.basename(obj['Key']))) for obj in objects]
             hdr_files = [f for f in files if re.search('hdf$', f)]
-            #files = ['HLS.L30.T17MPP.2016005.v1.5.hdf']
             for f in hdr_files:
                 sds = [sd[0] for sd in gdal.Open(f).GetSubDatasets()]
                 band_names = [item.split(':')[-1] for item in sds]
@@ -131,7 +133,7 @@ for tile in tiles:
                 for item in m:
                     writer.writerow(item)
             
-            subprocess.check_call(['geebam', 'upload', '--source', '.', '-m', 'metadata.csv', '--dest', ASSET, '--bucket', 'trendsearth-hls', '--bands', ','.join(band_names)])
+            subprocess.call(['geebam', 'upload', '--source', '.', '-m', 'metadata.csv', '--dest', ASSET, '--bucket', 'trendsearth-hls', '--bands', ','.join(band_names)])
 
             print('Deleting files......')
             for p in glob.glob('*.tif'):
@@ -140,5 +142,7 @@ for tile in tiles:
                 os.remove(p)
             for p in glob.glob('*.xml'):
                 os.remove(p)
-            time.sleep(3600*3)
 
+            current_time = datetime.datetime.now()
+            print('Sleeping from {} until {}......'.format(current_time, current_time + datetime.timedelta(seconds=SLEEP_SECONDS)))
+            time.sleep(SLEEP_SECONDS)
