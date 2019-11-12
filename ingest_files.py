@@ -18,15 +18,15 @@ import ntpath
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'gef-ld-toolbox-858b8c8b0b84.json'
 ASSET = 'projects/trends_earth/hls'
 
-SLEEP_SECONDS = 3600 * 2
+SLEEP_SECONDS = 3600
 
 # Read in the list of tiles
 with open('tiles.txt') as f:
     tiles = f.readlines()
 tiles = [t.strip('\n').split(',') for t in tiles]
 
-years = np.arange(2016, 2020)
-base_paths = ['PRO/v1.5/L8/L30', 'PRO/v1.5/S2/S30']
+years = np.arange(2015, 2020)
+base_paths = ['PRO/v1.5/S2/S30', 'PRO/v1.5/L8/L30']
 
 try:
     with open(os.path.join(os.path.dirname(__file__), 'aws_credentials.json'), 'r') as fin:
@@ -74,6 +74,14 @@ def get_metadata(files):
         times = re.findall(r'[\w.\-: ]+', this_m['SENSING_TIME'])
         t0 = dateutil.parser.parse(times[0].strip(' '))
 
+        
+        if re.search('HLS\.S30', f):
+            sensor = 'Sentinel-2'
+        elif re.search('HLS\.L30', f):
+            sensor = 'Landsat-8'
+        else:
+            sensor = 'Unknown'
+
         # # Mask layers don't have a long_name field, so assign one if this is a 
         # # mask layer
         # long_name = this_m.get('long_name', None)
@@ -84,12 +92,10 @@ def get_metadata(files):
         #         long_name = 'ACmask'
 
         m.append({'filename': os.path.splitext(ntpath.basename(f))[0].replace('.', '_'),
-                  'SENTINEL2_TILEID': this_m.get('SENTINEL2_TILEID', None),
-                  'SENSOR': this_m.get('SENSOR', None),
+                  'sensor': sensor,
                   'cloud_coverage': this_m.get('cloud_coverage', None),
                   #'MEAN_SUN_AZIMUTH_ANGLE': ''.join(this_m.get('MEAN_SUN_AZIMUTH_ANGLE', None)),
                   #'MEAN_SUN_ZENITH_ANGLE': ''.join(this_m.get('MEAN_SUN_ZENITH_ANGLE', None)),
-                  'DATA_TYPE': this_m.get('DATA_TYPE', None),
                   'spatial_coverage': this_m.get('spatial_coverage', None),
                   'SENSING_TIME': this_m.get('SENSING_TIME', None),
                   'system:time_start': unix_time_millis(t0)})
@@ -109,43 +115,47 @@ for tile in tiles:
             files = download_from_s3('hlsanc', objects, '.')
             #files = [os.path.abspath(os.path.join('.', ntpath.basename(obj['Key']))) for obj in objects]
             hdr_files = [f for f in files if re.search('hdf$', f)]
-            n = 0
-            for f in hdr_files:
-                n += 1
-                print('Processing {} (file {} of {})...'.format(f, n, len(hdr_files)))
-                sds = [sd[0] for sd in gdal.Open(f).GetSubDatasets()]
-                band_names = [item.split(':')[-1] for item in sds]
 
-                band_vrts = []
-                for sd in sds:
-                    out = tempfile.NamedTemporaryFile(suffix='.vrt').name
-                    subprocess.check_call(['gdal_translate', '-a_scale', '1', '-ot', 'Int16', '-q', sd, out])
-                    band_vrts.append(out)
+            if len(hdr_files) == 0:
+                continue
+            else:
+                n = 0
+                for f in hdr_files:
+                    n += 1
+                    print('Processing {} (file {} of {})...'.format(f, n, len(hdr_files)))
+                    sds = [sd[0] for sd in gdal.Open(f).GetSubDatasets()]
+                    band_names = [item.split(':')[-1] for item in sds]
 
-                out_base = os.path.splitext(f)[0].replace('.', '_')
-                vrt = tempfile.NamedTemporaryFile(suffix='.vrt').name
-                gdal.BuildVRT(vrt, band_vrts, separate=True)
-                tif = out_base + '.tif'
-                subprocess.check_call(['gdal_translate', '-co', 'COMPRESS=LZW', '-q', vrt, tif])
+                    band_vrts = []
+                    for sd in sds:
+                        out = tempfile.NamedTemporaryFile(suffix='.vrt').name
+                        subprocess.check_call(['gdal_translate', '-a_scale', '1', '-ot', 'Int16', '-q', sd, out])
+                        band_vrts.append(out)
 
-            m = get_metadata(hdr_files)
-            with open('metadata.csv', 'w', newline='') as csvfile:
-                fieldnames = m[0].keys()
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-                for item in m:
-                    writer.writerow(item)
-            
-            subprocess.call(['geebam', 'upload', '--source', '.', '-m', 'metadata.csv', '--dest', ASSET, '--bucket', 'trendsearth-hls', '--bands', ','.join(band_names)])
+                    out_base = os.path.splitext(f)[0].replace('.', '_')
+                    vrt = tempfile.NamedTemporaryFile(suffix='.vrt').name
+                    gdal.BuildVRT(vrt, band_vrts, separate=True)
+                    tif = out_base + '.tif'
+                    subprocess.check_call(['gdal_translate', '-co', 'COMPRESS=LZW', '-q', vrt, tif])
 
-            print('Deleting files......')
-            for p in glob.glob('*.tif'):
-                os.remove(p)
-            for p in glob.glob('*.hd*'):
-                os.remove(p)
-            for p in glob.glob('*.xml'):
-                os.remove(p)
+                m = get_metadata(hdr_files)
+                with open('metadata.csv', 'w', newline='') as csvfile:
+                    fieldnames = m[0].keys()
+                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                    writer.writeheader()
+                    for item in m:
+                        writer.writerow(item)
+                
+                subprocess.call(['geebam', 'upload', '--source', '.', '-m', 'metadata.csv', '--dest', ASSET, '--bucket', 'trendsearth-hls', '--bands', ','.join(band_names)])
 
-            current_time = datetime.datetime.now()
-            print('Sleeping from {} until {}......'.format(current_time, current_time + datetime.timedelta(seconds=SLEEP_SECONDS)))
-            time.sleep(SLEEP_SECONDS)
+                print('Deleting files......')
+                for p in glob.glob('*.tif'):
+                    os.remove(p)
+                for p in glob.glob('*.hd*'):
+                    os.remove(p)
+                for p in glob.glob('*.xml'):
+                    os.remove(p)
+
+                current_time = datetime.datetime.now()
+                print('Sleeping from {} until {}......'.format(current_time, current_time + datetime.timedelta(seconds=SLEEP_SECONDS)))
+                time.sleep(SLEEP_SECONDS)
