@@ -14,11 +14,14 @@ import time
 import glob
 import ntpath
 
+import ee
+
 
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'gef-ld-toolbox-858b8c8b0b84.json'
 ASSET = 'projects/trends_earth/hls'
+ee.Initialize()
 
-SLEEP_SECONDS = 3600
+SLEEP_SECONDS = 3600 / 2
 
 # Read in the list of tiles
 with open('tiles.txt') as f:
@@ -45,10 +48,14 @@ def unix_time_millis(dt):
 
 
 def list_s3_objects(bucket, s3_prefix):
-    objects = s3_client.list_objects(Bucket=bucket, Prefix='{}/'.format(s3_prefix))['Contents']
-    # Catch the case of the key pointing to the root of the bucket and skip it
-    objects = [o for o in objects if os.path.basename(o['Key']) != '']
-    return objects
+    resp = s3_client.list_objects(Bucket=bucket, Prefix='{}/'.format(s3_prefix))
+    if 'Contents' in resp:
+        objects = resp['Contents']
+        # Catch the case of the key pointing to the root of the bucket and skip it
+        objects = [o for o in objects if os.path.basename(o['Key']) != '']
+        return objects
+    else:
+        return []
 
 
 def download_from_s3(bucket, objects, local_folder):
@@ -101,6 +108,7 @@ def get_metadata(files):
                   'system:time_start': unix_time_millis(t0)})
     return m
 
+
 # Loop over all the tiles
 for tile in tiles:
     print("*************************************************************\nProcessing tile {}".format(tile))
@@ -112,13 +120,20 @@ for tile in tiles:
 
             # Function to download files from S3
             objects = list_s3_objects('hlsanc', l_tiles)
-            files = download_from_s3('hlsanc', objects, '.')
-            #files = [os.path.abspath(os.path.join('.', ntpath.basename(obj['Key']))) for obj in objects]
-            hdr_files = [f for f in files if re.search('hdf$', f)]
+            if len(objects) == 0:
+                continue
 
-            if len(hdr_files) == 0:
+            # Filter out any objects that are already present in the collection
+            hls = ee.ImageCollection(ASSET)
+            existing = [feat['properties']['filename'] for feat in hls.getInfo()['features']]
+            objects = [obj for obj in objects if re.search('hdf$', obj['Key'])]
+            objects = [obj for obj in objects if os.path.splitext(ntpath.basename(ntpath.basename(obj['Key'])))[0].replace('.', '_') not in existing]
+
+            if len(objects) == 0:
                 continue
             else:
+                hdr_files = download_from_s3('hlsanc', objects, '.')
+
                 n = 0
                 for f in hdr_files:
                     n += 1
