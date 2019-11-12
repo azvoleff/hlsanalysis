@@ -42,6 +42,7 @@ except IOError:
     s3_client = boto3.client('s3')
 
 
+# times for GEE need to be formatted in milliseconds since the Unix epoch
 epoch = datetime.datetime.fromtimestamp(0, datetime.timezone.utc)
 def unix_time_millis(dt):
     return (dt - epoch).total_seconds() * 1000.0
@@ -68,6 +69,7 @@ def download_from_s3(bucket, objects, local_folder):
     return local_files
 
 
+# HDF files need to be converted to tifs prior to upload to GEE
 def hdf_to_tif(f):
     out_file = os.path.splitext(f)[0] + '.tif'
     subprocess.check_call(['gdal_translate', f, out_file])
